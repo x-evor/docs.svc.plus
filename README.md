@@ -11,6 +11,9 @@ Go service for Cloud-Neutral documentation delivery and `docs-agent` actions.
 
 ## Endpoints
 
+- `GET /docs`
+- `GET /docs/{collection}`
+- `GET /docs/{collection}/{slugPath}`
 - `GET /healthz`
 - `GET /api/v1/docs/home`
 - `GET /api/v1/docs/collections`

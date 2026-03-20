@@ -81,6 +81,8 @@ func (a *App) Reload(pull bool) content.ReloadResult {
 func (a *App) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", a.handleHealth)
+	mux.HandleFunc("/docs", a.handlePublicDocs)
+	mux.HandleFunc("/docs/", a.handlePublicDocs)
 
 	api := http.NewServeMux()
 	api.HandleFunc("/api/v1/docs/home", a.handleDocsHome)
