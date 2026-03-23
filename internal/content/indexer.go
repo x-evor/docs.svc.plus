@@ -23,6 +23,10 @@ func NewIndexer(repoPath string) *Indexer {
 }
 
 func (i *Indexer) Build() (*Snapshot, error) {
+	docsNavigation, err := i.buildDocsNavigation()
+	if err != nil {
+		return nil, err
+	}
 	collections, pagesByKey, err := i.buildDocs()
 	if err != nil {
 		return nil, err
@@ -33,14 +37,39 @@ func (i *Indexer) Build() (*Snapshot, error) {
 	}
 
 	return &Snapshot{
-		DocsHomeByLang:    i.buildDocsHome(),
-		Collections:       collections,
-		CollectionsBySlug: mapCollections(collections),
-		PagesByKey:        pagesByKey,
-		Blogs:             blogs,
-		BlogsBySlug:       blogMap,
-		BlogCategories:    categories,
+		DocsHomeByLang:       i.buildDocsHome(),
+		DocsNavigationByLang: docsNavigation,
+		Collections:          collections,
+		CollectionsBySlug:    mapCollections(collections),
+		PagesByKey:           pagesByKey,
+		Blogs:                blogs,
+		BlogsBySlug:          blogMap,
+		BlogCategories:       categories,
 	}, nil
+}
+
+func (i *Indexer) buildDocsNavigation() (map[string]DocsNavigation, error) {
+	result := map[string]DocsNavigation{}
+	files := map[string]string{
+		"zh":      filepath.Join(i.RepoPath, "docs", "navigation.zh.yaml"),
+		"en":      filepath.Join(i.RepoPath, "docs", "navigation.en.yaml"),
+		"default": filepath.Join(i.RepoPath, "docs", "navigation.yaml"),
+	}
+	for lang, path := range files {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, err
+		}
+		var nav DocsNavigation
+		if err := yaml.Unmarshal(raw, &nav); err != nil {
+			return nil, err
+		}
+		result[lang] = nav
+	}
+	return result, nil
 }
 
 func (i *Indexer) buildDocsHome() map[string]DocsHome {
@@ -105,7 +134,14 @@ func (i *Indexer) buildDocs() ([]DocCollection, map[string]DocPage, error) {
 				return buildErr
 			}
 			versions = append(versions, version)
-			pages[pageKey(name, version.Slug)] = page
+			if version.Language != "" {
+				pages[pageKeyWithLang(name, version.Language, version.Slug)] = page
+				if _, exists := pages[pageKey(name, version.Slug)]; !exists {
+					pages[pageKey(name, version.Slug)] = page
+				}
+			} else {
+				pages[pageKey(name, version.Slug)] = page
+			}
 			return nil
 		})
 		if err != nil {
@@ -202,12 +238,14 @@ func buildDocVersion(docsRoot, collection, absolutePath string) (DocVersion, Doc
 		return DocVersion{}, DocPage{}, err
 	}
 	relative, _ := filepath.Rel(filepath.Join(docsRoot, collection), absolutePath)
-	slug := docSlug(relative)
+	slug := pickString(meta, "slug", docSlug(relative), "overview")
+	language := pickString(meta, "lang", "", "")
 	version := DocVersion{
 		Slug:        slug,
 		Label:       pickString(meta, "version", filepath.Base(slug), "latest"),
 		Title:       pickString(meta, "title", title, humanize(filepath.Base(slug))),
 		Description: pickString(meta, "description", excerpt, ""),
+		Language:    language,
 		UpdatedAt:   stat.ModTime().UTC().Format(time.RFC3339),
 		Tags:        stringSlice(meta["tags"]),
 		HTML:        html,
@@ -375,6 +413,10 @@ func mapCollections(collections []DocCollection) map[string]DocCollection {
 
 func pageKey(collection, slug string) string {
 	return collection + "::" + slug
+}
+
+func pageKeyWithLang(collection, lang, slug string) string {
+	return collection + ":" + lang + "::" + slug
 }
 
 func mapTOC(items []render.TOCItem) []TOCItem {

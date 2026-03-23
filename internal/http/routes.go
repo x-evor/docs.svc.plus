@@ -159,9 +159,63 @@ func (a *App) handleDocPage(w http.ResponseWriter, r *http.Request) {
 
 // filterCollectionsByLang filters collection metadata by language
 func filterCollectionsByLang(collections []content.DocCollection, lang string) []content.DocCollection {
-	// For now, return all collections - language filtering is applied at page level
-	// Future: could filter collection descriptions by language
-	return collections
+	if lang == "" || lang == "default" {
+		return collections
+	}
+
+	filtered := make([]content.DocCollection, 0, len(collections))
+	for _, collection := range collections {
+		bySlug := make(map[string]content.DocVersion)
+		order := make([]string, 0, len(collection.Versions))
+		for _, version := range collection.Versions {
+			if version.Language != "" && version.Language != lang {
+				continue
+			}
+			if _, exists := bySlug[version.Slug]; !exists {
+				order = append(order, version.Slug)
+			}
+			if existing, exists := bySlug[version.Slug]; exists && existing.Language == lang {
+				continue
+			}
+			bySlug[version.Slug] = version
+		}
+		if len(bySlug) == 0 {
+			filtered = append(filtered, collection)
+			continue
+		}
+		versions := make([]content.DocVersion, 0, len(order))
+		for _, slug := range order {
+			versions = append(versions, bySlug[slug])
+		}
+		next := collection
+		next.Versions = versions
+		next.Tags = collectCollectionTags(versions)
+		for _, version := range versions {
+			if version.Slug == collection.DefaultVersionSlug {
+				filtered = append(filtered, next)
+				goto nextCollection
+			}
+		}
+		next.DefaultVersionSlug = versions[0].Slug
+		filtered = append(filtered, next)
+	nextCollection:
+	}
+	return filtered
+}
+
+func collectCollectionTags(versions []content.DocVersion) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0)
+	for _, version := range versions {
+		for _, tag := range version.Tags {
+			if _, ok := seen[tag]; ok {
+				continue
+			}
+			seen[tag] = struct{}{}
+			out = append(out, tag)
+		}
+	}
+	return out
 }
 
 func (a *App) handleBlogs(w http.ResponseWriter, r *http.Request) {

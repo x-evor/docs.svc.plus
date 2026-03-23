@@ -11,18 +11,20 @@ import (
 )
 
 type publicDocsTemplateData struct {
-	Title            string
-	Description      string
-	CanonicalURL     string
-	GeneratedAt      string
-	Heading          string
-	Subheading       string
-	IntroHTML        template.HTML
-	ArticleHTML      template.HTML
-	Collections      []content.DocCollection
-	Breadcrumbs      []content.Crumb
-	TOC              []content.TOCItem
+	Title             string
+	Description       string
+	CanonicalURL      string
+	GeneratedAt       string
+	Heading           string
+	Subheading        string
+	IntroHTML         template.HTML
+	ArticleHTML       template.HTML
+	Collections       []content.DocCollection
+	Navigation        content.DocsNavigation
+	Breadcrumbs       []content.Crumb
+	TOC               []content.TOCItem
 	CurrentCollection string
+	CurrentPath       string
 }
 
 var publicDocsTemplate = template.Must(template.New("public-docs").Parse(`<!doctype html>
@@ -170,11 +172,11 @@ var publicDocsTemplate = template.Must(template.New("public-docs").Parse(`<!doct
         text-transform: uppercase;
         color: var(--muted);
       }
-      .toc, .collection-list {
+      .toc, .collection-list, .nav-sections {
         display: grid;
         gap: 0.6rem;
       }
-      .toc a, .collection-list a {
+      .toc a, .collection-list a, .nav-item {
         display: block;
         padding: 0.7rem 0.85rem;
         border-radius: 0.85rem;
@@ -182,13 +184,29 @@ var publicDocsTemplate = template.Must(template.New("public-docs").Parse(`<!doct
         font-family: ui-sans-serif, system-ui, sans-serif;
         color: var(--text);
       }
-      .toc a:hover, .collection-list a:hover {
+      .toc a:hover, .collection-list a:hover, .nav-item:hover {
         background: var(--accent-soft);
         text-decoration: none;
       }
-      .collection-list a.active {
+      .collection-list a.active, .nav-item.active {
         background: var(--accent-soft);
         border: 1px solid rgba(31,122,79,0.18);
+      }
+      .nav-section {
+        display: grid;
+        gap: 0.45rem;
+        padding-left: 0.9rem;
+        border-left: 1px solid rgba(20, 33, 26, 0.08);
+      }
+      .nav-section + .nav-section {
+        margin-top: 1.2rem;
+      }
+      .nav-section-title {
+        margin: 0 0 0.2rem;
+        font-family: ui-sans-serif, system-ui, sans-serif;
+        font-size: 0.82rem;
+        font-weight: 700;
+        color: var(--text);
       }
       footer {
         margin-top: 1.5rem;
@@ -231,7 +249,19 @@ var publicDocsTemplate = template.Must(template.New("public-docs").Parse(`<!doct
             {{ end }}
           </nav>
           {{ end }}
-          {{ if .Collections }}
+          {{ if .Navigation.Sections }}
+          <p class="sidebar-title" style="margin-top: 1.25rem;">Browse docs</p>
+          <nav class="nav-sections">
+            {{ range .Navigation.Sections }}
+            <section class="nav-section">
+              <p class="nav-section-title">{{ .Title }}</p>
+              {{ range .Items }}
+              <a href="{{ .Href }}" class="nav-item{{ if eq $.CurrentPath .Href }} active{{ end }}">{{ .Title }}</a>
+              {{ end }}
+            </section>
+            {{ end }}
+          </nav>
+          {{ else if .Collections }}
           <p class="sidebar-title" style="margin-top: 1.25rem;">Collections</p>
           <nav class="collection-list">
             {{ range .Collections }}
@@ -248,6 +278,23 @@ var publicDocsTemplate = template.Must(template.New("public-docs").Parse(`<!doct
         {{ end }}
       </section>
       <section class="panel">
+        {{ if .Navigation.Sections }}
+        <p class="sidebar-title">Browse docs</p>
+        <div class="home-grid">
+          {{ range .Navigation.Sections }}
+          <section class="card">
+            <h2>{{ .Title }}</h2>
+            <div class="nav-sections">
+              <div class="nav-section" style="border-left: none; padding-left: 0;">
+                {{ range .Items }}
+                <a href="{{ .Href }}" class="nav-item">{{ .Title }}</a>
+                {{ end }}
+              </div>
+            </div>
+          </section>
+          {{ end }}
+        </div>
+        {{ else }}
         <p class="sidebar-title">Browse collections</p>
         <div class="home-grid">
           {{ range .Collections }}
@@ -258,6 +305,7 @@ var publicDocsTemplate = template.Must(template.New("public-docs").Parse(`<!doct
           </a>
           {{ end }}
         </div>
+        {{ end }}
       </section>
       {{ end }}
       <footer>Generated {{ .GeneratedAt }}</footer>
@@ -289,6 +337,7 @@ func (a *App) renderPublicDocsHome(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		home = snapshot.DocsHomeByLang["default"]
 	}
+	navigation := pickDocsNavigation(snapshot, lang)
 
 	a.renderPublicDocsTemplate(w, http.StatusOK, publicDocsTemplateData{
 		Title:        home.Title + " | docs.svc.plus",
@@ -298,7 +347,9 @@ func (a *App) renderPublicDocsHome(w http.ResponseWriter, r *http.Request) {
 		Heading:      home.Title,
 		Subheading:   home.Description,
 		IntroHTML:    template.HTML(home.HTML),
-		Collections:  snapshot.Collections,
+		Collections:  filterCollectionsByLang(snapshot.Collections, lang),
+		Navigation:   navigation,
+		CurrentPath:  "/docs",
 	})
 }
 
@@ -313,7 +364,9 @@ func (a *App) redirectCollectionHome(w http.ResponseWriter, r *http.Request, col
 }
 
 func (a *App) renderPublicDocPage(w http.ResponseWriter, r *http.Request, collection, slug string) {
-	page, ok := a.GetSnapshot().PagesByKey[collection+"::"+slug]
+	lang := resolveLang(r)
+	snapshot := a.GetSnapshot()
+	page, ok := resolveDocPage(snapshot, lang, collection, slug)
 	if !ok {
 		http.NotFound(w, r)
 		return
@@ -327,10 +380,12 @@ func (a *App) renderPublicDocPage(w http.ResponseWriter, r *http.Request, collec
 		Heading:           page.Version.Title,
 		Subheading:        page.Version.Description,
 		ArticleHTML:       template.HTML(page.Version.HTML),
-		Collections:       a.GetSnapshot().Collections,
+		Collections:       filterCollectionsByLang(snapshot.Collections, lang),
+		Navigation:        pickDocsNavigation(snapshot, lang),
 		Breadcrumbs:       page.Breadcrumbs,
 		TOC:               page.Version.TOC,
 		CurrentCollection: page.Collection.Slug,
+		CurrentPath:       "/docs/" + collection + "/" + slug,
 	})
 }
 
@@ -362,4 +417,32 @@ func publicCanonicalURL(r *http.Request, path string) string {
 		host = "docs.svc.plus"
 	}
 	return scheme + "://" + host + path
+}
+
+func pickDocsNavigation(snapshot *content.Snapshot, lang string) content.DocsNavigation {
+	if snapshot == nil {
+		return content.DocsNavigation{}
+	}
+	if lang != "" && lang != "default" {
+		if nav, ok := snapshot.DocsNavigationByLang[lang]; ok {
+			return nav
+		}
+	}
+	if nav, ok := snapshot.DocsNavigationByLang["default"]; ok {
+		return nav
+	}
+	return content.DocsNavigation{}
+}
+
+func resolveDocPage(snapshot *content.Snapshot, lang, collection, slug string) (content.DocPage, bool) {
+	if snapshot == nil {
+		return content.DocPage{}, false
+	}
+	if lang != "" && lang != "default" {
+		if page, ok := snapshot.PagesByKey[collection+":"+lang+"::"+slug]; ok {
+			return page, true
+		}
+	}
+	page, ok := snapshot.PagesByKey[collection+"::"+slug]
+	return page, ok
 }

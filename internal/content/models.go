@@ -12,11 +12,28 @@ type DocsHome struct {
 	HTML        string `json:"html"`
 }
 
+type DocsNavigation struct {
+	Title       string           `json:"title" yaml:"title"`
+	Description string           `json:"description" yaml:"description"`
+	Sections    []DocsNavSection `json:"sections" yaml:"sections"`
+}
+
+type DocsNavSection struct {
+	Title string        `json:"title" yaml:"title"`
+	Items []DocsNavItem `json:"items" yaml:"items"`
+}
+
+type DocsNavItem struct {
+	Title string `json:"title" yaml:"title"`
+	Href  string `json:"href" yaml:"href"`
+}
+
 type DocVersion struct {
 	Slug        string    `json:"slug"`
 	Label       string    `json:"label"`
 	Title       string    `json:"title"`
 	Description string    `json:"description"`
+	Language    string    `json:"language,omitempty"`
 	UpdatedAt   string    `json:"updatedAt,omitempty"`
 	Tags        []string  `json:"tags"`
 	HTML        string    `json:"html"`
@@ -84,13 +101,14 @@ type SearchHit struct {
 }
 
 type Snapshot struct {
-	DocsHomeByLang    map[string]DocsHome
-	Collections       []DocCollection
-	CollectionsBySlug map[string]DocCollection
-	PagesByKey        map[string]DocPage
-	Blogs             []BlogPost
-	BlogsBySlug       map[string]BlogPost
-	BlogCategories    []BlogCategory
+	DocsHomeByLang       map[string]DocsHome
+	DocsNavigationByLang map[string]DocsNavigation
+	Collections          []DocCollection
+	CollectionsBySlug    map[string]DocCollection
+	PagesByKey           map[string]DocPage
+	Blogs                []BlogPost
+	BlogsBySlug          map[string]BlogPost
+	BlogCategories       []BlogCategory
 }
 
 type ReloadResult struct {
