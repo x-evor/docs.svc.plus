@@ -115,18 +115,41 @@ func (a *App) handleDocsHome(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, home)
 }
 
-func (a *App) handleDocCollections(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, a.GetSnapshot().Collections)
+func (a *App) handleDocCollections(w http.ResponseWriter, r *http.Request) {
+	lang := resolveLang(r)
+	snapshot := a.GetSnapshot()
+	// Filter collections by language if needed
+	collections := snapshot.Collections
+	if lang != "default" {
+		// Return collections with language-specific metadata
+		collections = filterCollectionsByLang(collections, lang)
+	}
+	writeJSON(w, http.StatusOK, collections)
 }
 
 func (a *App) handleDocPage(w http.ResponseWriter, r *http.Request) {
+	lang := resolveLang(r)
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/docs/pages/")
 	parts := strings.SplitN(path, "/", 2)
 	if len(parts) < 2 {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "collection_and_slug_required"})
 		return
 	}
-	page, ok := a.GetSnapshot().PagesByKey[parts[0]+"::"+parts[1]]
+
+	// Try language-specific key first, then fallback
+	pageKey := parts[0] + "::" + parts[1]
+	snapshot := a.GetSnapshot()
+
+	// If language is specified, try to find language-specific version
+	if lang != "default" {
+		langKey := parts[0] + ":" + lang + "::" + parts[1]
+		if page, ok := snapshot.PagesByKey[langKey]; ok {
+			writeJSON(w, http.StatusOK, page)
+			return
+		}
+	}
+
+	page, ok := snapshot.PagesByKey[pageKey]
 	if !ok {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "not_found"})
 		return
@@ -134,7 +157,15 @@ func (a *App) handleDocPage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, page)
 }
 
+// filterCollectionsByLang filters collection metadata by language
+func filterCollectionsByLang(collections []content.DocCollection, lang string) []content.DocCollection {
+	// For now, return all collections - language filtering is applied at page level
+	// Future: could filter collection descriptions by language
+	return collections
+}
+
 func (a *App) handleBlogs(w http.ResponseWriter, r *http.Request) {
+	lang := resolveLang(r)
 	query := strings.TrimSpace(r.URL.Query().Get("query"))
 	category := strings.TrimSpace(r.URL.Query().Get("category"))
 	page := parseInt(r.URL.Query().Get("page"), 1)
@@ -145,6 +176,10 @@ func (a *App) handleBlogs(w http.ResponseWriter, r *http.Request) {
 
 	filtered := make([]content.BlogPost, 0)
 	for _, post := range a.GetSnapshot().Blogs {
+		// Filter by language if specified
+		if lang != "default" && post.Language != "" && post.Language != lang {
+			continue
+		}
 		if category != "" && (post.Category == nil || post.Category.Key != category) {
 			continue
 		}
@@ -191,11 +226,25 @@ func (a *App) handleBlogPost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleLatestBlogs(w http.ResponseWriter, r *http.Request) {
+	lang := resolveLang(r)
 	limit := parseInt(r.URL.Query().Get("limit"), 7)
 	if limit > 20 {
 		limit = 20
 	}
+
 	posts := a.GetSnapshot().Blogs
+
+	// Filter by language if specified
+	if lang != "default" {
+		filtered := make([]content.BlogPost, 0)
+		for _, post := range posts {
+			if post.Language == "" || post.Language == lang {
+				filtered = append(filtered, post)
+			}
+		}
+		posts = filtered
+	}
+
 	if len(posts) > limit {
 		posts = posts[:limit]
 	}
@@ -234,10 +283,28 @@ func (a *App) handleAgentInvoke(w http.ResponseWriter, r *http.Request) {
 }
 
 func resolveLang(r *http.Request) string {
+	// 1. URL query parameter takes highest priority
 	lang := strings.TrimSpace(r.URL.Query().Get("lang"))
 	if lang == "zh" || lang == "en" {
 		return lang
 	}
+
+	// 2. Check X-Language header (global state from console)
+	lang = strings.TrimSpace(r.Header.Get("X-Language"))
+	if lang == "zh" || lang == "en" {
+		return lang
+	}
+
+	// 3. Check Accept-Language header
+	acceptLang := r.Header.Get("Accept-Language")
+	if strings.Contains(strings.ToLower(acceptLang), "zh") {
+		return "zh"
+	}
+	if strings.Contains(strings.ToLower(acceptLang), "en") {
+		return "en"
+	}
+
+	// 4. Default fallback
 	return "default"
 }
 
